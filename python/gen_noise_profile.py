@@ -17,6 +17,7 @@ import random
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.seasonal import STL
 from copy import deepcopy
+import math
 
 #this must go--it simply must
 from r_wrapper_aa_v1 import r_ts_fit, r_arma_noise_gen
@@ -256,7 +257,7 @@ def get_hmm_outputs(subset_index,input_data_df,n_order=0):
         value as described above and noise_seq, each cell of which should contain
         an np.array of the sequence of interest. 
         Example: 
-            ['Index', 'noise_seq']
+            ['index', 'noise_seq']
             'Washington', [1,2,3,...]
     n_order : TYPE, optional
         DESCRIPTION. The default is 0.
@@ -287,6 +288,7 @@ def get_hmm_outputs(subset_index,input_data_df,n_order=0):
                 dict1[key].append(seq)
     
     for ind in subset_index:
+        print('working on {}'.format(ind))
         data_vec_loc = input_data_df[input_data_df['index']==ind]
         data_vec_loc = data_vec_loc['noise_seq'].to_numpy()[0]
         emm, mag, dir_dict_loc, nn = _emission_hmm(input_vec=data_vec_loc,n_order=n_order)
@@ -388,7 +390,7 @@ def generate_noise_sequences(input_ts_list, subset_index, input_data_df,
         value as described above and noise_seq, each cell of which should contain
         an np.array of the sequence of interest. 
         Example: 
-            ['Index', 'noise_seq']
+            ['index', 'noise_seq']
             'Washington', [1,2,3,...]
     n_periodic_components : int, optional
         The number of periodic components desired. 1= only max pACF, 2=top 2 etc.
@@ -427,8 +429,8 @@ def generate_noise_sequences(input_ts_list, subset_index, input_data_df,
         periodic_comp_dict[str(n)+'_n_vec']=n_vec
     
     for seq in input_ts_list:
-        #calulate minimum chain length
-        chain_len=5*len(seq)
+        #calulate maximum chain length
+        chain_len=math.floor(len(seq)/5)
         #add periodic noise
         seq_c = deepcopy(seq)
         for n in list(range(0,n_periodic_components)):
@@ -446,7 +448,63 @@ def generate_noise_sequences(input_ts_list, subset_index, input_data_df,
             seq_c = _weight_chain_avg(seq_c,chain_noise_seq,weight=white_noise_weight)
         #add shuffle permutations
         if shuffle_permute==True:
-            seq_c = shuffle_permute(seq_c)
+            seq_c, shuffle_indexes = _shuffle_permute(seq_c,shuffle_prob=shuffle_prob)
         ###return seq
         out_list.append(seq_c)
     return(out_list)
+
+#%% Sample noise model code
+#simplified JHU pull
+url = 'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv'
+df = pd.read_csv(url, index_col=0)
+
+#create index
+unique_index = df['Province_State'].unique()
+#aggregate to desired level
+agg_df = df.groupby(['Province_State']).sum()
+#create output df
+input_data_df = pd.DataFrame()
+#change columnar observations to single vector
+for loc in unique_index:
+    row_ind = agg_df[agg_df.index==loc].index[0]
+    row_vals = agg_df[agg_df.index==loc].iloc[0,4:].to_numpy()
+    #change from total to daily counts
+    row_vals = np.diff(row_vals)
+    #coerce negatives to 0s
+    row_vals[row_vals<0]=0
+    #trim sequences to the first observation above 5
+    if len(row_vals[row_vals>5])!=0:
+        start_mask = [i for i,v in enumerate(row_vals >=5) if v][0]
+        row_vals = row_vals[start_mask:]
+        input_data_df=input_data_df.append({'index' : row_ind, \
+                                            'noise_seq' : row_vals}, ignore_index=True)
+
+#remove cruiseship data
+input_data_df=input_data_df.drop([input_data_df[input_data_df['index']=='Diamond Princess'].index[0],])
+input_data_df=input_data_df.drop([input_data_df[input_data_df['index']=='Grand Princess'].index[0],])
+
+#update index
+unique_index = input_data_df['index'].unique()
+
+#generate noise models
+a,b,c,d = get_hmm_outputs(subset_index=unique_index,
+                          input_data_df=input_data_df,
+                          n_order=0)
+#%% Sample noise generation code
+#generate sample sequences
+input_ts_list=[]
+for j in range(0,100,1):
+    input_ts_list.append(np.hstack([i for i in range(0,365,1)]))
+
+output_seq = generate_noise_sequences(input_ts_list=input_ts_list, 
+                         subset_index=unique_index,
+                         input_data_df=input_data_df,
+                         n_periodic_components=1, white_noise=False, 
+                         white_noise_weight = 0.05, shuffle_permute=True,
+                         shuffle_prob = 30, smooth_transitions=False)
+
+#visualize sample noised sequence
+plt.plot(input_ts_list[0],label='original linear sequence')
+plt.plot(output_seq[0],label='noised sequence')
+plt.legend()
+plt.title('Sample Noise Sequence')
