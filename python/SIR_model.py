@@ -17,6 +17,7 @@ from statsmodels.tsa.stattools import pacf
 from scipy.integrate import odeint
 from scipy.optimize import minimize
 from sklearn import preprocessing
+from copy import deepcopy
 
 #%% init params / data
 pop_size = 1000000
@@ -121,7 +122,8 @@ def _solve_path(R0, t_vec, init_params = [1/5.2,1/18,1/20], x_init=x_0):
     s_path, e_path, ai_path, i_path, ot_path, d_path, r_path = odeint(G, x_init, t_vec).transpose()
 
     c_path = 1 - s_path - e_path - r_path      # cumulative cases
-    return i_path, c_path, d_path, ot_path
+    #return i_path, c_path, d_path, ot_path
+    return s_path, e_path, ai_path, i_path, c_path, ot_path, d_path, r_path 
 
 def Rtp_mitigating(t, r0=3, intervention=0.007, r_bar=0.8, fpc=8, spc=100, fcw=.05, scw = 0.2):
     '''
@@ -242,11 +244,26 @@ def Rto_mitigating(t,Rt_external,Rt_local):
     if len(t) > 1:
         Rt_local[0:len(Rt_external)]=Rt_external
         return Rt_local
-
+    
+def _R0_overwrite(t, r0=2, intervention=0.1, r_bar=0.9, fpc=8, spc=100, spcc=0, fpcc=0, rt_est=rt_est):
+    R0 = (r0*exp(-intervention*t)+(1-exp(-intervention*t))*r_bar) * \
+        (1+(np.sin((2*math.pi/fpc)*t))*fpcc) * \
+        (1+(np.sin((2*math.pi/spc)*t))*spcc)
+    #force overwrite
+    if type(t) == int or type(t) == float:
+        if t > (len(rt_est)-1):
+            return R0
+        if t <= (len(rt_est)-1):
+            return rt_est[round(t)]
+    if len(t) > 1:
+        R0[0:len(rt_est)]=rt_est
+        return R0
+    
 def SIR_generation(n_seqs=1000, pop_size=1000000, 
-                   best_est_params=[0.27, 0.19, 0.44, 0.12, 0.58, 0.19, 0.34, 0.55],
+                   best_est_params=[0.26, 0.20, 0.42, 0.12, 0.58, 0.19, 0.33, 0.53],
                    permute_params=True, intercept_dist=obs_Rt_intercept_vec,
-                   min_outbreak_threshold=100,rt_method='Rtg',**args):
+                   min_outbreak_threshold=100,rt_method='Rtg',all_compartments=False,
+                   **args):
     '''
     Wrapper function to generate SIR curves with realistic Rt.
 
@@ -259,14 +276,14 @@ def SIR_generation(n_seqs=1000, pop_size=1000000,
     best_est_params : list, optional
         List of SIR parameters. These are a combination of estimates from published
         research and estimates from fitting SIR models iteratively across a number of US states.
-            infection rate = 0.27
-            recovery rate = 0.19
-            asymptomatic infection rate = 0.44
+            infection rate = 0.26
+            recovery rate = 0.20
+            asymptomatic infection rate = 0.42
             asymptomatic test rate = 0.12
             symptomatic test rate = 0.58
             asmyptomatic recovery rate = 0.19
-            asymptomatic transmission rate = 0.34
-            symptomatic transmission rate = 0.55
+            asymptomatic transmission rate = 0.33
+            symptomatic transmission rate = 0.53
     permute_params : Boolean, optional
         Option to randomly permute input parameters. The default is True.
     intercept_dist : List, optional
@@ -284,6 +301,8 @@ def SIR_generation(n_seqs=1000, pop_size=1000000,
                 Exponential + periodic components generated from sin waves
             Rto:
                 Exponential + overwrites to with preferred, precalculated rt estimate
+    all_compartments : Boolean, optional
+        Option to return all compartments from the SIR model. The default is false.
     **args : values to be passed into any subfunction
     
     Returns
@@ -293,62 +312,77 @@ def SIR_generation(n_seqs=1000, pop_size=1000000,
     '''
     
     output_list_seqs = []
+    #rt_test_seqs = []
     iter_val = 0
-    while iter_val < n_seqs:
+    while iter_val < n_seqs:    
+        local_params = deepcopy(best_est_params)
         if permute_params==True:
             for i in range(0,8):
-                best_est_params[i]=best_est_params[i]+np.random.normal(0,0.01,1)
+                local_params[i]=local_params[i]+np.random.normal(0,0.005,1)
         intercept = random.sample(intercept_dist,1)[0]
         if rt_method=='Rtg':
-            rt_est=Rtg_mitigating(t=t_vec, intervention=0.05, 
+            rt_est_i=Rtg_mitigating(t=t_vec, intervention=0.05, 
                                   n_peaks=random.sample([2,3,4],1)[0],r0=intercept)
         elif rt_method=='Rtp':
-            rt_est=Rtp_mitigating(t=t_vec,r0=random.sample(intercept_dist,1)[0],
+            rt_est_i=Rtp_mitigating(t=t_vec,r0=random.sample(intercept_dist,1)[0],
                                   scw=.2,fcw=.05,intervention=0.1,r_bar=.9)
         elif rt_method=='Rto':
-            rt_est=Rto_mitigating(t=t_vec, Rt_external = args['Rt_external'],
+            rt_est_i=Rto_mitigating(t=t_vec, Rt_external = args['Rt_external'],
                                   Rt_local = Rtp_mitigating(t=t_vec,r0=random.sample(intercept_dist,1)[0],
                                                                scw=0,fcw=0))
-        R0 = lambda t: Rto_mitigating(t=t, Rt_external=rt_est, 
-                                      Rt_local = Rtp_mitigating(t=t_vec,r0=random.sample(intercept_dist,1)[0],
-                                                               scw=0,fcw=0))
-        i_path, c_path, d_path, ot_path = _solve_path(R0, t_vec, init_params=best_est_params)
-        cases = [path * pop_size for path in i_path]
-        cases = np.array(cases)
-        if max(cases)<min_outbreak_threshold:
-            print('total i < min_threshold')
-            #cases=cases*10
-        #if np.sum(cases)>pop_size:
+        rt_est = rt_est_i
+        #R0(np.array(range(0,550)))
+        R0 = lambda t: _R0_overwrite(t, rt_est=rt_est)
+        
+        s_path, e_path, ai_path, i_path, c_path, ot_path, d_path, r_path = _solve_path(R0, t_vec, init_params=local_params )
+        compartment_dict = {}
+        compartment_dict = {'susceptible':s_path, 'exposed':e_path, 'asymptomatic_infected':ai_path,
+                            'symptomatic_infected':i_path, 'cumulative_infected':c_path,
+                            'positive_tests':ot_path, 'deceased':d_path, 'recovered': r_path}
+        out_dict = {}
+        for key,val in compartment_dict.items():
+            out_dict[key]= [path * pop_size for path in val]
             
-            #print('Error in model specfiication: total i > pop_size')
+        cases = np.array(out_dict['symptomatic_infected'])+np.array(out_dict['asymptomatic_infected'])        
+        #if max(cases)<min_outbreak_threshold:
+            #print('total i < min_threshold')
+        #if np.sum(cases)>pop_size:
+            #print('Error in model specification: total i > pop_size {}'.format(local_params ))
         if np.sum(cases)<=pop_size:
-            output_list_seqs.append(cases)
-            print('success')
-            #plt.plot(cases,label='deaths')
-            iter_val+=1
-    return output_list_seqs
-
+            if all_compartments==False:
+                output_list_seqs.append(np.array(out_dict['positive_tests']))
+                #rt_test_seqs.append(rt_est)
+                iter_val+=1
+            if all_compartments==True:
+                output_list_seqs.append(out_dict)
+                iter_val+=1
+        
+    return output_list_seqs#, rt_test_seqs
 #%% generate sequences
-
-
-
+'''
+infection rate = 0.26
+            recovery rate = 0.20
+            asymptomatic infection rate = 0.42
+            asymptomatic test rate = 0.12
+            symptomatic test rate = 0.58
+            asmyptomatic recovery rate = 0.19
+            asymptomatic transmission rate = 0.33
+            symptomatic transmission rate = 0.53
 
 output_sir_seqs = SIR_generation(n_seqs=10, pop_size=1000000, 
-                   best_est_params=[0.27, 0.19, 0.44, 0.12, 0.58, 0.19, 0.34, 0.55],
-                   permute_params=True, intercept_dist=obs_Rt_intercept_vec,
-                   min_outbreak_threshold=100,rt_method='Rtg')
-
-for i in output_list_seqs:
+                   best_est_params=[0.26, 0.20, 0.42, 0.12, 0.58, 0.19, 0.33, 0.53],
+                   permute_params=False, intercept_dist=obs_Rt_intercept_vec,
+                   min_outbreak_threshold=100,rt_method='Rtg',all_compartments=False)
+#visualise infection curves
+for i in output_sir_seqs:
     plt.plot(i)
 
 output_list_seq_df = pd.DataFrame(output_list_seqs)
-
 output_list_seq_df = pd.DataFrame(columns = ['Country_Region','Dt','NewPat','Oracle_kz','shuffles'])
-
-for i in range(0,999):
-    
+for i in range(0,len(output_sir_seqs)):    
     output_list_seq_df=output_list_seq_df.append({'Country_Region' : i, \
                               'Dt' : np.array([j for j in range(1,1000)]),\
                               'NewPat' : [0],\
                               'Oracle_kz' : output_list_seqs[i],}, ignore_index=True)
 output_list_seq_df.to_pickle('realistic_sir_curves.pkl',protocol=4)
+'''
