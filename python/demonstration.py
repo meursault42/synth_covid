@@ -8,7 +8,6 @@ Created on Mon Mar  8 15:43:09 2021
 #%% libraries
 #os.chdir('C:\\Users\\u6026797')
 #os.chdir('C:\\Users\\u6026797\\Documents\\GitHub\\synth_covid\\python')
-
 import os
 import pandas as pd
 import numpy as np
