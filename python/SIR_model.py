@@ -246,7 +246,7 @@ def Rto_mitigating(t,Rt_external,Rt_local):
 def SIR_generation(n_seqs=1000, pop_size=1000000, 
                    best_est_params=[0.27, 0.19, 0.44, 0.12, 0.58, 0.19, 0.34, 0.55],
                    permute_params=True, intercept_dist=obs_Rt_intercept_vec,
-                   min_outbreak_threshold=100):
+                   min_outbreak_threshold=100,rt_method='Rtg',**args):
     '''
     Wrapper function to generate SIR curves with realistic Rt.
 
@@ -259,7 +259,7 @@ def SIR_generation(n_seqs=1000, pop_size=1000000,
     best_est_params : list, optional
         List of SIR parameters. These are a combination of estimates from published
         research and estimates from fitting SIR models iteratively across a number of US states.
-            infection rate = .27
+            infection rate = 0.27
             recovery rate = 0.19
             asymptomatic infection rate = 0.44
             asymptomatic test rate = 0.12
@@ -276,59 +276,67 @@ def SIR_generation(n_seqs=1000, pop_size=1000000,
     min_outbreak_threshold : Boolean, optional
         Cutoff value for minimum outbreak threshold. Enable to require outbreaks
         to infect more than n patients. The default is 100.
-
+    rt_method : str, optional
+        Preferred method of calculating Rt. Options are:
+            Rtg:
+                Exponential + n randomly selected gaussian bumps
+            Rtp:
+                Exponential + periodic components generated from sin waves
+            Rto:
+                Exponential + overwrites to with preferred, precalculated rt estimate
+    **args : values to be passed into any subfunction
+    
     Returns
     -------
     List of simulated Infected cases.
 
     '''
+    
+    output_list_seqs = []
+    iter_val = 0
+    while iter_val < n_seqs:
+        if permute_params==True:
+            for i in range(0,8):
+                best_est_params[i]=best_est_params[i]+np.random.normal(0,0.01,1)
+        intercept = random.sample(intercept_dist,1)[0]
+        if rt_method=='Rtg':
+            rt_est=Rtg_mitigating(t=t_vec, intervention=0.05, 
+                                  n_peaks=random.sample([2,3,4],1)[0],r0=intercept)
+        elif rt_method=='Rtp':
+            rt_est=Rtp_mitigating(t=t_vec,r0=random.sample(intercept_dist,1)[0],
+                                  scw=.2,fcw=.05,intervention=0.1,r_bar=.9)
+        elif rt_method=='Rto':
+            rt_est=Rto_mitigating(t=t_vec, Rt_external = args['Rt_external'],
+                                  Rt_local = Rtp_mitigating(t=t_vec,r0=random.sample(intercept_dist,1)[0],
+                                                               scw=0,fcw=0))
+        R0 = lambda t: Rto_mitigating(t=t, Rt_external=rt_est, 
+                                      Rt_local = Rtp_mitigating(t=t_vec,r0=random.sample(intercept_dist,1)[0],
+                                                               scw=0,fcw=0))
+        i_path, c_path, d_path, ot_path = _solve_path(R0, t_vec, init_params=best_est_params)
+        cases = [path * pop_size for path in i_path]
+        cases = np.array(cases)
+        if max(cases)<min_outbreak_threshold:
+            print('total i < min_threshold')
+            #cases=cases*10
+        #if np.sum(cases)>pop_size:
+            
+            #print('Error in model specfiication: total i > pop_size')
+        if np.sum(cases)<=pop_size:
+            output_list_seqs.append(cases)
+            print('success')
+            #plt.plot(cases,label='deaths')
+            iter_val+=1
+    return output_list_seqs
 
 #%% generate sequences
 
 
-output_list_seqs = []
-iter_val= 0
-while iter_val < 1000:
-    pop_size = 1000000
-    #best_est_params=[0.26, 0.19, 0.44, 0.12, 0.58, 0.19, 0.34, 0.54]
-    best_est_params=[0.27, 0.19, 0.44, 0.12, 0.58, 0.19, 0.34, 0.55]
-    
-    for i in range(0,8):
-        best_est_params[i]=best_est_params[i]+np.random.normal(0,0.01,1)
-    #best_est_params['x']
-    #rt_est = random_rt_sampler()[0]
-    intercept = random.sample(obs_R0_vec,1)[0]
-    rt_est=Rtg_mitigating(t=t_vec, intervention= 0.05,
-                          n_peaks=random.sample([2,3,4],1)[0],
-                          r0=intercept)
-    #plt.plot(rt_est)
-    #plt.title('Sample Generated Rt')
-    R0 = lambda t: R0_mitigating(t=t) #, intervention=0.007, pcc = pcc)
-    i_path, c_path, d_path, ot_path = solve_path(R0, t_vec, init_params=best_est_params)
-    #plot deaths data
-    #d_path = d_path[:len(comp_vec)]
-    #out = [path * pop_size for path in d_path]
-    
-    #plot infected data
-    #ot_path = ot_path[:len(comp_vec)]
-    #out_i = [path * pop_size for path in ot_path]
-    
-    #i_path = i_path[:len(comp_vec)]
-    cases = [path * pop_size for path in i_path]
-    cases = np.array(cases)
-    #plt.plot(out_i,label='tests')
-    #plt.plot(oi,label='cases?')
-    #plt.legend()
-    if max(cases)<100:
-        cases=cases*100
-    #if max(cases[0:300])>250:
-    if np.sum(cases)>pop_size:
-        print('too many cooks!')
-    if np.sum(cases)<=pop_size:
-        output_list_seqs.append(cases)
-        print('success')
-        #plt.plot(cases,label='deaths')
-        iter_val+=1
+
+
+output_sir_seqs = SIR_generation(n_seqs=10, pop_size=1000000, 
+                   best_est_params=[0.27, 0.19, 0.44, 0.12, 0.58, 0.19, 0.34, 0.55],
+                   permute_params=True, intercept_dist=obs_Rt_intercept_vec,
+                   min_outbreak_threshold=100,rt_method='Rtg')
 
 for i in output_list_seqs:
     plt.plot(i)
