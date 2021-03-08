@@ -245,20 +245,6 @@ def Rto_mitigating(t,Rt_external,Rt_local):
         Rt_local[0:len(Rt_external)]=Rt_external
         return Rt_local
     
-def _R0_overwrite(t, r0=2, intervention=0.1, r_bar=0.9, fpc=8, spc=100, spcc=0, fpcc=0, rt_est=rt_est):
-    R0 = (r0*exp(-intervention*t)+(1-exp(-intervention*t))*r_bar) * \
-        (1+(np.sin((2*math.pi/fpc)*t))*fpcc) * \
-        (1+(np.sin((2*math.pi/spc)*t))*spcc)
-    #force overwrite
-    if type(t) == int or type(t) == float:
-        if t > (len(rt_est)-1):
-            return R0
-        if t <= (len(rt_est)-1):
-            return rt_est[round(t)]
-    if len(t) > 1:
-        R0[0:len(rt_est)]=rt_est
-        return R0
-    
 def SIR_generation(n_seqs=1000, pop_size=1000000, 
                    best_est_params=[0.26, 0.20, 0.42, 0.12, 0.58, 0.19, 0.33, 0.53],
                    permute_params=True, intercept_dist=obs_Rt_intercept_vec,
@@ -332,6 +318,19 @@ def SIR_generation(n_seqs=1000, pop_size=1000000,
                                                                scw=0,fcw=0))
         rt_est = rt_est_i
         #R0(np.array(range(0,550)))
+        def _R0_overwrite(t, r0=2, intervention=0.1, r_bar=0.9, fpc=8, spc=100, spcc=0, fpcc=0, rt_est=rt_est):
+            R0 = (r0*exp(-intervention*t)+(1-exp(-intervention*t))*r_bar) * \
+                (1+(np.sin((2*math.pi/fpc)*t))*fpcc) * \
+                (1+(np.sin((2*math.pi/spc)*t))*spcc)
+            #force overwrite
+            if type(t) == int or type(t) == float:
+                if t > (len(rt_est)-1):
+                    return R0
+                if t <= (len(rt_est)-1):
+                    return rt_est[round(t)]
+            if len(t) > 1:
+                R0[0:len(rt_est)]=rt_est
+                return R0
         R0 = lambda t: _R0_overwrite(t, rt_est=rt_est)
         
         s_path, e_path, ai_path, i_path, c_path, ot_path, d_path, r_path = _solve_path(R0, t_vec, init_params=local_params )

@@ -455,6 +455,7 @@ def generate_noise_sequences(input_ts_list, subset_index, input_data_df,
 
 #%% Sample noise model code
 #simplified JHU pull
+'''
 url = 'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv'
 df = pd.read_csv(url, index_col=0)
 
@@ -508,3 +509,4 @@ plt.plot(input_ts_list[0],label='original linear sequence')
 plt.plot(output_seq[0],label='noised sequence')
 plt.legend()
 plt.title('Sample Noise Sequence')
+'''
